@@ -1,0 +1,103 @@
+{
+  "SuppressionRules": [
+    {
+      "Name": "suppress-internal-scanner",
+      "Description": "Suppress findings from internal Kali Linux lab scanning tools",
+      "Action": "SUPPRESS",
+      "Criteria": {
+        "Criterion": {
+          "service.action.networkConnectionAction.remoteIpDetails.ipAddressV4": {
+            "Equals": [
+              "192.168.1.0/24",
+              "10.0.0.0/8",
+              "172.16.0.0/12"
+            ]
+          },
+          "type": {
+            "Equals": [
+              "Recon:EC2/PortProbeUnprotectedPort",
+              "Recon:EC2/Portscan"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "Name": "suppress-known-admin-ips",
+      "Description": "Suppress findings originating from known good admin source IPs",
+      "Action": "SUPPRESS",
+      "Criteria": {
+        "Criterion": {
+          "service.action.awsApiCallAction.remoteIpDetails.ipAddressV4": {
+            "Equals": [
+              "192.168.1.100",
+              "192.168.1.101",
+              "192.168.1.102"
+            ]
+          },
+          "type": {
+            "Equals": [
+              "UnauthorizedAccess:IAMUser/ConsoleLoginSuccess.B",
+              "Policy:IAMUser/RootCredentialUsage"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "Name": "suppress-dev-instance-activity",
+      "Description": "Suppress low-severity findings for tagged development/test instances",
+      "Action": "SUPPRESS",
+      "Criteria": {
+        "Criterion": {
+          "resource.instanceDetails.tags.key": {
+            "Equals": ["Environment"]
+          },
+          "resource.instanceDetails.tags.value": {
+            "Equals": ["dev", "test", "lab"]
+          },
+          "severity": {
+            "LessThanOrEqual": 4
+          }
+        }
+      }
+    },
+    {
+      "Name": "suppress-dns-data-exfil-lab",
+      "Description": "Suppress DNS exfil findings for known lab DNS tools (e.g. dnscat2 testing)",
+      "Action": "SUPPRESS",
+      "Criteria": {
+        "Criterion": {
+          "type": {
+            "Equals": [
+              "Trojan:EC2/DNSDataExfiltration"
+            ]
+          },
+          "resource.instanceDetails.tags.key": {
+            "Equals": ["Purpose"]
+          },
+          "resource.instanceDetails.tags.value": {
+            "Equals": ["dns-lab"]
+          }
+        }
+      }
+    },
+    {
+      "Name": "suppress-lambda-test-invocations",
+      "Description": "Suppress anomalous Lambda invocation findings from test functions",
+      "Action": "SUPPRESS",
+      "Criteria": {
+        "Criterion": {
+          "type": {
+            "Equals": [
+              "Behavior:Lambda/NetworkActivity.Unusual"
+            ]
+          },
+          "resource.lambdaDetails.functionName": {
+            "Contains": ["test", "dev", "lab"]
+          }
+        }
+      }
+    }
+  ]
+}

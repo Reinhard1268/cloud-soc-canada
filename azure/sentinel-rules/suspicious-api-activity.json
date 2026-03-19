@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01-preview",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/suspicious-api-activity-', uniqueString(resourceGroup().id))]",
+      "location": "canadacentral",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Suspicious Azure Management API Activity",
+        "description": "Detects anomalous Azure Resource Manager API calls including bulk resource deletions, enumeration of secrets/keys, mass permission changes, or high-rate API calls from a single identity. MITRE ATT&CK: T1526 - Cloud Service Discovery, T1530 - Data from Cloud Storage.",
+        "severity": "High",
+        "enabled": true,
+        "status": "Available",
+        "query": "AzureActivity\n| where TimeGenerated >= ago(1h)\n| where ActivityStatusValue =~ \"Success\"\n| extend\n    CallerUPN     = tostring(Caller),\n    OperationName = tostring(OperationNameValue),\n    ResourceGroup = tostring(ResourceGroup),\n    ResourceType  = tostring(ResourceProviderValue),\n    SubscriptionId = tostring(SubscriptionId)\n| extend\n    IsDeletion    = OperationName has_any (\"delete\", \"Delete\", \"DELETE\"),\n    IsSecretOp    = OperationName has_any (\"listKeys\", \"listSecrets\", \"getSecret\", \"regenerateKey\"),\n    IsPermChange  = OperationName has_any (\"roleAssignments\", \"roleDefinitions\", \"permissions\")\n| summarize\n    TotalCalls        = count(),\n    DeleteOps         = countif(IsDeletion == true),\n    SecretOps         = countif(IsSecretOp == true),\n    PermOps           = countif(IsPermChange == true),\n    UniqueResources   = dcount(ResourceGroup),\n    UniqueOperations  = dcount(OperationName),\n    Operations        = make_set(OperationName, 20),\n    FirstSeen         = min(TimeGenerated),\n    LastSeen          = max(TimeGenerated)\n    by CallerUPN, bin(TimeGenerated, 15m)\n| where\n    DeleteOps >= 5\n    or SecretOps >= 3\n    or PermOps >= 5\n    or TotalCalls >= 100\n    or (UniqueResources >= 10 and TotalCalls >= 30)\n| extend\n    ThreatType = case(\n        DeleteOps >= 5,                       \"Bulk Resource Deletion\",\n        SecretOps >= 3,                       \"Secret/Key Enumeration\",\n        PermOps >= 5,                         \"Mass Permission Changes\",\n        TotalCalls >= 100,                    \"High-Rate API Enumeration\",\n        UniqueResources >= 10,                \"Cross-Resource Enumeration\",\n        \"Anomalous API Activity\"\n    ),\n    RiskScore = DeleteOps * 10 + SecretOps * 15 + PermOps * 8 + (TotalCalls / 10)\n| project\n    TimeGenerated = FirstSeen,\n    CallerUPN,\n    ThreatType,\n    RiskScore,\n    TotalCalls,\n    DeleteOps,\n    SecretOps,\n    PermOps,\n    UniqueResources,\n    UniqueOperations,\n    Operations\n| sort by RiskScore desc",
+        "queryFrequency": "PT15M",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT2H",
+        "suppressionEnabled": false,
+        "tactics": ["Discovery", "Collection", "Impact"],
+        "techniques": ["T1526", "T1530", "T1485"],
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              { "identifier": "FullName", "columnName": "CallerUPN" }
+            ]
+          }
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT2H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": ["Account"]
+          }
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Suspicious API: {{ThreatType}} by {{CallerUPN}}",
+          "alertDescriptionFormat": "Risk Score: {{RiskScore}} | {{TotalCalls}} API calls | {{DeleteOps}} deletes | {{SecretOps}} secret ops"
+        }
+      }
+    }
+  ],
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "defaultValue": "soc-lab-workspace"
+    }
+  }
+}

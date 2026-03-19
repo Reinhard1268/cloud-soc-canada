@@ -1,0 +1,63 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01-preview",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/impossible-travel-', uniqueString(resourceGroup().id))]",
+      "location": "canadacentral",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Impossible Travel Detected",
+        "description": "Detects logins from two geographically distant locations within 1 hour where travel between them would be physically impossible. Uses Haversine approximation via coordinate distance. Mapped to MITRE ATT&CK T1078 - Valid Accounts.",
+        "severity": "High",
+        "enabled": true,
+        "status": "Available",
+        "query": "let timeWindow = 1h;\nlet minDistanceKm = 500;\nSigninLogs\n| where TimeGenerated >= ago(timeWindow)\n| where ResultType == 0\n| where isnotempty(UserPrincipalName)\n| where isnotempty(LocationDetails)\n| extend\n    Lat        = toreal(LocationDetails.geoCoordinates.latitude),\n    Lon        = toreal(LocationDetails.geoCoordinates.longitude),\n    Country    = tostring(LocationDetails.countryOrRegion),\n    City       = tostring(LocationDetails.city),\n    IPAddress  = tostring(IPAddress),\n    AppName    = tostring(AppDisplayName),\n    DeviceOS   = tostring(DeviceDetail.operatingSystem)\n| where isnotempty(Lat) and isnotempty(Lon)\n| summarize\n    Locations  = make_list(pack('lat', Lat, 'lon', Lon, 'country', Country, 'city', City, 'ip', IPAddress, 'time', TimeGenerated, 'app', AppName)),\n    DistinctCountries = dcount(Country),\n    LoginCount = count(),\n    FirstLogin = min(TimeGenerated),\n    LastLogin  = max(TimeGenerated)\n    by UserPrincipalName, bin(TimeGenerated, timeWindow)\n| where DistinctCountries >= 2\n| extend\n    Loc1       = tostring(Locations[0]),\n    Loc2       = tostring(Locations[1]),\n    TimeDeltaMin = datetime_diff('minute', LastLogin, FirstLogin)\n| extend\n    SuspicionScore = case(\n        DistinctCountries >= 3,       \"CRITICAL — 3+ countries\",\n        TimeDeltaMin < 30,            \"HIGH — < 30 min between distant logins\",\n        TimeDeltaMin < 60,            \"HIGH — < 1 hour between distant logins\",\n        \"MEDIUM — same hour, different countries\"\n    )\n| project\n    TimeGenerated  = FirstLogin,\n    UserPrincipalName,\n    DistinctCountries,\n    LoginCount,\n    TimeDeltaMinutes = TimeDeltaMin,\n    SuspicionScore,\n    FirstLogin,\n    LastLogin,\n    Locations",
+        "queryFrequency": "PT30M",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": ["InitialAccess", "CredentialAccess"],
+        "techniques": ["T1078"],
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              { "identifier": "FullName", "columnName": "UserPrincipalName" }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              { "identifier": "Address", "columnName": "Loc1" }
+            ]
+          }
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": ["Account"]
+          }
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Impossible Travel: {{UserPrincipalName}} logged in from {{DistinctCountries}} countries",
+          "alertDescriptionFormat": "{{SuspicionScore}} — {{LoginCount}} logins across {{DistinctCountries}} countries within {{TimeDeltaMinutes}} minutes"
+        }
+      }
+    }
+  ],
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "defaultValue": "soc-lab-workspace"
+    }
+  }
+}

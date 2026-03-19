@@ -1,0 +1,114 @@
+# =============================================================
+# aws-filebeat-config.yml
+# Filebeat configuration for ingesting AWS CloudTrail and
+# GuardDuty logs into Elasticsearch
+# Place at: /etc/filebeat/filebeat.yml (or run with -c flag)
+# =============================================================
+
+filebeat.inputs:
+
+  # ── CloudTrail logs from S3 (via S3 SQS notification) ──────
+  - type: aws-s3
+    enabled: true
+    name: cloudtrail-s3
+    queue_url: "${AWS_SQS_CLOUDTRAIL_URL:}"
+    bucket_arn: "arn:aws:s3:::${AWS_CLOUDTRAIL_BUCKET:soc-lab-cloudtrail-logs-ca}"
+    access_key_id: "${AWS_ACCESS_KEY_ID:}"
+    secret_access_key: "${AWS_SECRET_ACCESS_KEY:}"
+    default_region: "ca-central-1"
+    expand_event_list_from_field: Records
+    tags: ["cloudtrail", "aws", "ca-central-1"]
+    fields:
+      cloud_provider: aws
+      log_type: cloudtrail
+      soc_project: "06-cloud-soc-canada"
+    fields_under_root: false
+    processors:
+      - decode_json_fields:
+          fields: ["message"]
+          target: "cloudtrail"
+          overwrite_keys: true
+      - drop_event:
+          when:
+            not:
+              has_fields: ["cloudtrail.eventName"]
+
+  # ── GuardDuty findings from S3 ────────────────────────────
+  - type: aws-s3
+    enabled: true
+    name: guardduty-s3
+    queue_url: "${AWS_SQS_GUARDDUTY_URL:}"
+    access_key_id: "${AWS_ACCESS_KEY_ID:}"
+    secret_access_key: "${AWS_SECRET_ACCESS_KEY:}"
+    default_region: "ca-central-1"
+    tags: ["guardduty", "aws", "ca-central-1"]
+    fields:
+      cloud_provider: aws
+      log_type: guardduty
+      soc_project: "06-cloud-soc-canada"
+    fields_under_root: false
+
+  # ── CloudWatch Logs ────────────────────────────────────────
+  - type: aws-cloudwatch
+    enabled: true
+    log_group_arn: "arn:aws:logs:ca-central-1:${AWS_ACCOUNT_ID:}:log-group:/aws/cloudtrail/soc-lab:*"
+    access_key_id: "${AWS_ACCESS_KEY_ID:}"
+    secret_access_key: "${AWS_SECRET_ACCESS_KEY:}"
+    scan_frequency: 1m
+    start_position: beginning
+    tags: ["cloudwatch", "cloudtrail", "aws", "ca-central-1"]
+    fields:
+      log_type: cloudtrail-cw
+    fields_under_root: false
+
+filebeat.modules:
+  - module: aws
+    cloudtrail:
+      enabled: true
+      var.bucket_arn: "arn:aws:s3:::${AWS_CLOUDTRAIL_BUCKET:soc-lab-cloudtrail-logs-ca}"
+      var.access_key_id: "${AWS_ACCESS_KEY_ID:}"
+      var.secret_access_key: "${AWS_SECRET_ACCESS_KEY:}"
+      var.default_region: "ca-central-1"
+
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_cloud_metadata: ~
+  - add_docker_metadata: ~
+
+output.elasticsearch:
+  hosts: ["${ELASTIC_URL:http://localhost:9200}"]
+  username: "${ELASTIC_USER:elastic}"
+  password: "${ELASTIC_PASSWORD:}"
+  index: "filebeat-aws-%{[agent.version]}-%{+yyyy.MM.dd}"
+  pipeline: "aws-cloudtrail-pipeline"
+  ssl.verification_mode: none
+  bulk_max_size: 500
+  worker: 2
+
+setup.template:
+  name: "filebeat-aws"
+  pattern: "filebeat-aws-*"
+  overwrite: false
+
+setup.ilm.enabled: true
+setup.ilm.policy_name: "soc-cloud-ilm-policy"
+setup.ilm.rollover_alias: "filebeat-aws"
+
+setup.kibana:
+  host: "${KIBANA_URL:http://localhost:5601}"
+  username: "${ELASTIC_USER:elastic}"
+  password: "${ELASTIC_PASSWORD:}"
+
+logging:
+  level: info
+  to_files: true
+  files:
+    path: /var/log/filebeat
+    name: filebeat-aws
+    keepfiles: 7
+    permissions: 0640
+
+monitoring:
+  enabled: true
+  cluster_uuid: ""

@@ -1,0 +1,107 @@
+# =============================================================
+# .gitignore — 06-cloud-soc-canada
+# NEVER commit credentials, secrets, or personal data to GitHub
+# =============================================================
+
+# ── Credentials & Secrets ─────────────────────────────────────
+.env
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*_rsa
+*_rsa.pub
+*_ed25519
+*_ed25519.pub
+credentials.json
+service-account*.json
+*secret*.json
+*credentials*.json
+token.json
+access_token*
+
+# ── AWS Specific ──────────────────────────────────────────────
+.aws/
+aws-credentials*
+*.aws_credentials
+cloudtrail-state.json
+
+# ── Azure Specific ────────────────────────────────────────────
+.azure/
+azure-profile.json
+azureProfile.json
+msal_token_cache.bin
+msal_token_cache.json
+
+# ── State & Runtime Files ─────────────────────────────────────
+logs/
+*.log
+logs/cloudtrail_state.json
+logs/guardduty_state.json
+logs/securityhub_state.json
+logs/azure_state.json
+logs/forwarder_state.json
+logs/forwarder.log
+logs/remediation-log.json
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# ── Virtual Environments ──────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+ENV/
+.virtualenv/
+
+# ── IDE & OS Files ────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Python Build Artifacts ────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+site-packages/
+
+# ── Test Artifacts ────────────────────────────────────────────
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+nosetests.xml
+test-results/
+
+# ── Terraform (if extended later) ────────────────────────────
+*.tfstate
+*.tfstate.backup
+*.tfvars
+.terraform/
+.terraform.lock.hcl
+
+# ── Sensitive Output Files ────────────────────────────────────
+compliance/cis-benchmarks/*-live-*.md
+compliance/cis-benchmarks/*-results-live*.md
+*-report-*.md
+
+# ── Temporary Files ───────────────────────────────────────────
+/tmp/
+*.tmp
+*.temp
+*.bak
+*.orig

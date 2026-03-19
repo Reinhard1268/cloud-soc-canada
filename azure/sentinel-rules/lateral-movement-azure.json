@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01-preview",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/lateral-movement-azure-', uniqueString(resourceGroup().id))]",
+      "location": "canadacentral",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Lateral Movement Detected in Azure Environment",
+        "description": "Detects lateral movement patterns within Azure including token theft/reuse from new IPs, use of managed identities from unexpected locations, cross-subscription activity from a single identity, and repeated VM access using just-in-time or Bastion. MITRE ATT&CK: T1550 - Use Alternate Authentication Material, T1021 - Remote Services.",
+        "severity": "High",
+        "enabled": true,
+        "status": "Available",
+        "query": "// Detect access token reuse from multiple distinct IPs in short window\nlet tokenReuse = SigninLogs\n    | where TimeGenerated >= ago(1h)\n    | where ResultType == 0\n    | where AuthenticationDetails has \"accessToken\" or ClientAppUsed =~ \"Microsoft Azure PowerShell\"\n    | summarize\n        DistinctIPs     = dcount(IPAddress),\n        IPList          = make_set(IPAddress),\n        ResourceList    = make_set(ResourceDisplayName),\n        LoginCount      = count(),\n        FirstSeen       = min(TimeGenerated),\n        LastSeen        = max(TimeGenerated)\n        by UserPrincipalName, bin(TimeGenerated, 30m)\n    | where DistinctIPs >= 3\n    | extend ThreatType = \"TOKEN_REUSE_MULTIPLE_IPS\";\n// VM-to-VM lateral movement via Run Command or Custom Script Extension\nlet vmRunCmd = AzureActivity\n    | where TimeGenerated >= ago(1h)\n    | where OperationNameValue has_any (\"runCommand\", \"CustomScriptExtension\", \"runShellScript\")\n    | where ActivityStatusValue =~ \"Success\"\n    | summarize\n        VMsAccessed = dcount(ResourceId),\n        VMList      = make_set(ResourceId),\n        CmdCount    = count(),\n        FirstSeen   = min(TimeGenerated)\n        by Caller, bin(TimeGenerated, 30m)\n    | where VMsAccessed >= 2\n    | extend\n        ThreatType      = \"VM_RUN_COMMAND_LATERAL\",\n        UserPrincipalName = Caller,\n        DistinctIPs     = 1,\n        IPList          = dynamic([]),\n        ResourceList    = VMList,\n        LoginCount      = CmdCount,\n        LastSeen        = FirstSeen;\n// Managed identity used from unexpected subscription\nlet managedIdentity = AuditLogs\n    | where TimeGenerated >= ago(1h)\n    | where InitiatedBy.app.servicePrincipalId != \"\"\n    | where OperationName has_any (\"Add member\", \"Update\", \"consent\")\n    | extend\n        ServicePrincipal = tostring(InitiatedBy.app.displayName),\n        CallerUPN        = tostring(InitiatedBy.app.servicePrincipalId)\n    | summarize\n        OperationCount   = count(),\n        Operations       = make_set(OperationName),\n        FirstSeen        = min(TimeGenerated)\n        by CallerUPN, ServicePrincipal, bin(TimeGenerated, 30m)\n    | where OperationCount >= 5\n    | extend\n        ThreatType        = \"MANAGED_IDENTITY_ABUSE\",\n        UserPrincipalName = ServicePrincipal,\n        DistinctIPs       = 0,\n        IPList            = dynamic([]),\n        ResourceList      = Operations,\n        LoginCount        = OperationCount,\n        LastSeen          = FirstSeen;\nunion tokenReuse, vmRunCmd, managedIdentity\n| extend\n    RiskScore = case(\n        ThreatType == \"TOKEN_REUSE_MULTIPLE_IPS\",  DistinctIPs * 20 + LoginCount,\n        ThreatType == \"VM_RUN_COMMAND_LATERAL\",    VMsAccessed * 30 + LoginCount,\n        LoginCount * 10\n    )\n| project\n    TimeGenerated = FirstSeen,\n    UserPrincipalName,\n    ThreatType,\n    RiskScore,\n    DistinctIPs,\n    IPList,\n    ResourceList,\n    LoginCount,\n    FirstSeen,\n    LastSeen\n| sort by RiskScore desc",
+        "queryFrequency": "PT30M",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT2H",
+        "suppressionEnabled": false,
+        "tactics": ["LateralMovement"],
+        "techniques": ["T1550", "T1021"],
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              { "identifier": "FullName", "columnName": "UserPrincipalName" }
+            ]
+          }
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT2H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": ["Account"]
+          }
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Lateral Movement: {{ThreatType}} by {{UserPrincipalName}}",
+          "alertDescriptionFormat": "Risk Score: {{RiskScore}} | {{LoginCount}} events across {{DistinctIPs}} IPs"
+        }
+      }
+    }
+  ],
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "defaultValue": "soc-lab-workspace"
+    }
+  }
+}

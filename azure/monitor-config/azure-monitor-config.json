@@ -1,0 +1,102 @@
+{
+  "version": "1.0",
+  "description": "Azure Monitor configuration for SOC Lab — canadacentral",
+  "workspace": {
+    "name": "soc-lab-workspace",
+    "location": "canadacentral",
+    "sku": "PerGB2018",
+    "retentionDays": 90,
+    "resourceGroup": "soc-lab-rg"
+  },
+  "diagnosticSettings": {
+    "activityLogs": {
+      "enabled": true,
+      "categories": [
+        "Administrative",
+        "Security",
+        "ServiceHealth",
+        "Alert",
+        "Recommendation",
+        "Policy",
+        "Autoscale",
+        "ResourceHealth"
+      ],
+      "retentionDays": 90
+    },
+    "aadLogs": {
+      "enabled": true,
+      "categories": [
+        "SignInLogs",
+        "AuditLogs",
+        "NonInteractiveUserSignInLogs",
+        "ServicePrincipalSignInLogs",
+        "ManagedIdentitySignInLogs",
+        "RiskyUsers",
+        "UserRiskEvents"
+      ],
+      "retentionDays": 90,
+      "requiresLicense": "AzureAD-P1"
+    }
+  },
+  "dataConnectors": [
+    {
+      "name": "AzureActiveDirectory",
+      "enabled": true,
+      "dataTypes": ["SigninLogs", "AuditLogs"]
+    },
+    {
+      "name": "AzureActivity",
+      "enabled": true,
+      "dataTypes": ["AzureActivity"]
+    },
+    {
+      "name": "SecurityCenter",
+      "enabled": true,
+      "dataTypes": ["SecurityAlert", "SecurityRecommendation"]
+    },
+    {
+      "name": "MicrosoftDefenderAdvancedThreatProtection",
+      "enabled": false,
+      "note": "Requires Microsoft 365 Defender license"
+    },
+    {
+      "name": "Office365",
+      "enabled": false,
+      "note": "Requires Office 365 subscription"
+    }
+  ],
+  "alertRules": {
+    "scheduledQueryRules": [
+      "iam-privilege-escalation.json",
+      "impossible-travel.json",
+      "new-admin-account.json",
+      "suspicious-api-activity.json",
+      "crypto-mining-detection.json",
+      "data-exfiltration.json",
+      "lateral-movement-azure.json",
+      "brute-force-azure.json"
+    ]
+  },
+  "retentionPolicies": {
+    "hotTier": {
+      "tables": [
+        "SigninLogs",
+        "AuditLogs",
+        "AzureActivity",
+        "SecurityAlert",
+        "SecurityEvent"
+      ],
+      "retentionDays": 90
+    },
+    "coldTier": {
+      "tables": ["StorageBlobLogs", "AzureDiagnostics"],
+      "retentionDays": 30
+    }
+  },
+  "canadianComplianceNotes": {
+    "region": "canadacentral",
+    "dataResidency": "All data stays in Canada Central region",
+    "pipeda": "Logs contain PII — handle per PIPEDA requirements",
+    "sovereignty": "Azure Canada Central is a domestic Canadian region for data sovereignty"
+  }
+}

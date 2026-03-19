@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01-preview",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/data-exfiltration-', uniqueString(resourceGroup().id))]",
+      "location": "canadacentral",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Cloud Data Exfiltration Detected",
+        "description": "Detects potential data exfiltration from Azure Blob Storage, file shares, or databases including large downloads, unusual access patterns, access from foreign IPs to sensitive storage, or bulk export operations. MITRE ATT&CK: T1530 - Data from Cloud Storage Object, T1537 - Transfer Data to Cloud Account.",
+        "severity": "High",
+        "enabled": true,
+        "status": "Available",
+        "query": "let exfilThresholdMB = 500;\nlet suspiciousCountries = dynamic([\"RU\", \"CN\", \"KP\", \"IR\", \"SY\"]);\n// Blob storage large downloads\nlet blobExfil = StorageBlobLogs\n    | where TimeGenerated >= ago(1h)\n    | where OperationName =~ \"GetBlob\"\n    | where ResponseBodySize > (exfilThresholdMB * 1024 * 1024)\n    | extend\n        CallerIP    = tostring(CallerIpAddress),\n        AccountName = tostring(AccountName),\n        Container   = tostring(Uri)\n    | summarize\n        TotalBytes  = sum(ResponseBodySize),\n        BlobCount   = count(),\n        FirstSeen   = min(TimeGenerated)\n        by CallerIP, AccountName, bin(TimeGenerated, 15m)\n    | extend\n        ThreatType  = \"BLOB_LARGE_DOWNLOAD\",\n        TotalMB     = round(TotalBytes / 1048576.0, 1)\n    | where TotalMB > exfilThresholdMB\n    | project TimeGenerated = FirstSeen, CallerIP, AccountName, ThreatType, TotalMB, BlobCount;\n// Azure Storage access from suspicious geographies\nlet geoExfil = StorageBlobLogs\n    | where TimeGenerated >= ago(1h)\n    | where OperationName =~ \"GetBlob\"\n    | extend CallerIP = tostring(CallerIpAddress)\n    | evaluate geo_info_from_ip_address(CallerIP)\n    | where CountryIso2 in (suspiciousCountries)\n    | summarize\n        AccessCount = count(),\n        TotalBytes  = sum(ResponseBodySize),\n        FirstSeen   = min(TimeGenerated)\n        by CallerIP, AccountName, CountryIso2, bin(TimeGenerated, 1h)\n    | extend\n        ThreatType  = \"GEO_SUSPICIOUS_ACCESS\",\n        TotalMB     = round(TotalBytes / 1048576.0, 1)\n    | project TimeGenerated = FirstSeen, CallerIP, AccountName, ThreatType, TotalMB, AccessCount;\n// Bulk export from Azure SQL\nlet sqlExfil = AzureDiagnostics\n    | where TimeGenerated >= ago(1h)\n    | where Category == \"SQLSecurityAuditEvents\"\n    | where action_name_s =~ \"BULK INSERT\" or action_name_s =~ \"DBCC\"\n    | summarize\n        QueryCount  = count(),\n        FirstSeen   = min(TimeGenerated)\n        by client_ip_s, server_instance_name_s, bin(TimeGenerated, 15m)\n    | where QueryCount >= 5\n    | extend\n        ThreatType  = \"SQL_BULK_EXPORT\",\n        CallerIP    = client_ip_s,\n        AccountName = server_instance_name_s,\n        TotalMB     = 0.0\n    | project TimeGenerated = FirstSeen, CallerIP, AccountName, ThreatType, TotalMB, BlobCount = QueryCount;\nunion blobExfil, geoExfil, sqlExfil\n| summarize\n    ThreatTypes   = make_set(ThreatType),\n    TotalMB       = sum(TotalMB),\n    EventCount    = count(),\n    FirstSeen     = min(TimeGenerated),\n    LastSeen      = max(TimeGenerated)\n    by CallerIP, AccountName\n| extend\n    Severity = case(\n        TotalMB > 5000,                \"CRITICAL\",\n        TotalMB > 1000,                \"HIGH\",\n        array_length(ThreatTypes) > 1, \"HIGH\",\n        \"MEDIUM\"\n    )\n| project\n    TimeGenerated = FirstSeen,\n    CallerIP,\n    AccountName,\n    Severity,\n    ThreatTypes,\n    TotalMB,\n    EventCount,\n    FirstSeen,\n    LastSeen",
+        "queryFrequency": "PT15M",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT2H",
+        "suppressionEnabled": false,
+        "tactics": ["Exfiltration"],
+        "techniques": ["T1530", "T1537"],
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              { "identifier": "Address", "columnName": "CallerIP" }
+            ]
+          }
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT2H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": ["IP"]
+          }
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Data Exfiltration from {{AccountName}} — {{TotalMB}} MB",
+          "alertDescriptionFormat": "Severity: {{Severity}} | Threat types: {{ThreatTypes}} | Source IP: {{CallerIP}}"
+        }
+      }
+    }
+  ],
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "defaultValue": "soc-lab-workspace"
+    }
+  }
+}

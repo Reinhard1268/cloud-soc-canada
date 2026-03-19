@@ -1,0 +1,63 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01-preview",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/brute-force-azure-', uniqueString(resourceGroup().id))]",
+      "location": "canadacentral",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Brute Force Attack Against Azure AD",
+        "description": "Detects brute force or password spray attacks against Azure Active Directory. Identifies: single account with 10+ failed logins in 10 min, single IP targeting 5+ distinct accounts (password spray), and successful login following a burst of failures (breach indicator). MITRE ATT&CK: T1110 - Brute Force.",
+        "severity": "High",
+        "enabled": true,
+        "status": "Available",
+        "query": "let failWindow   = 10m;\nlet failThresh   = 10;\nlet sprayThresh  = 5;\nlet successAfterFail = 3;\n// Pattern 1: Single account brute force\nlet accountBrute = SigninLogs\n    | where TimeGenerated >= ago(1h)\n    | where ResultType != 0\n    | where ResultType !in (50125, 50140)\n    | summarize\n        FailCount     = count(),\n        DistinctIPs   = dcount(IPAddress),\n        IPList        = make_set(IPAddress, 10),\n        AppList       = make_set(AppDisplayName, 5),\n        FirstFail     = min(TimeGenerated),\n        LastFail      = max(TimeGenerated)\n        by UserPrincipalName, bin(TimeGenerated, failWindow)\n    | where FailCount >= failThresh\n    | extend AttackPattern = \"ACCOUNT_BRUTE_FORCE\";\n// Pattern 2: Password spray (1 IP → many accounts)\nlet passwordSpray = SigninLogs\n    | where TimeGenerated >= ago(1h)\n    | where ResultType != 0\n    | summarize\n        TargetAccounts = dcount(UserPrincipalName),\n        AccountList    = make_set(UserPrincipalName, 20),\n        FailCount      = count(),\n        AppList        = make_set(AppDisplayName, 5),\n        FirstFail      = min(TimeGenerated),\n        LastFail       = max(TimeGenerated)\n        by IPAddress, bin(TimeGenerated, failWindow)\n    | where TargetAccounts >= sprayThresh\n    | extend\n        AttackPattern    = \"PASSWORD_SPRAY\",\n        UserPrincipalName = \"multiple-accounts\",\n        DistinctIPs       = 1,\n        IPList            = pack_array(IPAddress);\n// Pattern 3: Success after failures (breach indicator)\nlet successAfterFailures = SigninLogs\n    | where TimeGenerated >= ago(1h)\n    | extend WasSuccess = iff(ResultType == 0, 1, 0)\n    | summarize\n        FailsBefore   = countif(ResultType != 0),\n        Successes     = countif(ResultType == 0),\n        DistinctIPs   = dcount(IPAddress),\n        IPList        = make_set(IPAddress, 5),\n        AppList       = make_set(AppDisplayName),\n        FirstFail     = min(TimeGenerated),\n        LastFail      = max(TimeGenerated)\n        by UserPrincipalName, bin(TimeGenerated, 30m)\n    | where FailsBefore >= successAfterFail and Successes >= 1\n    | extend\n        AttackPattern = \"SUCCESS_AFTER_BRUTE\",\n        FailCount     = FailsBefore;\nunion accountBrute, passwordSpray, successAfterFailures\n| extend\n    Severity = case(\n        AttackPattern == \"SUCCESS_AFTER_BRUTE\",    \"Critical\",\n        AttackPattern == \"PASSWORD_SPRAY\",          \"High\",\n        FailCount >= 50,                            \"High\",\n        \"Medium\"\n    ),\n    RiskScore = case(\n        AttackPattern == \"SUCCESS_AFTER_BRUTE\",    100,\n        AttackPattern == \"PASSWORD_SPRAY\",          TargetAccounts * 10,\n        FailCount * 2\n    )\n| project\n    TimeGenerated  = FirstFail,\n    UserPrincipalName,\n    AttackPattern,\n    Severity,\n    RiskScore,\n    FailCount,\n    DistinctIPs,\n    IPList,\n    AppList,\n    FirstFail,\n    LastFail\n| sort by RiskScore desc",
+        "queryFrequency": "PT10M",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT1H",
+        "suppressionEnabled": false,
+        "tactics": ["CredentialAccess"],
+        "techniques": ["T1110"],
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              { "identifier": "FullName", "columnName": "UserPrincipalName" }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              { "identifier": "Address", "columnName": "IPList" }
+            ]
+          }
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT1H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": ["Account", "IP"]
+          }
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Brute Force: {{AttackPattern}} against {{UserPrincipalName}}",
+          "alertDescriptionFormat": "Severity: {{Severity}} | {{FailCount}} failures | {{DistinctIPs}} source IPs | Pattern: {{AttackPattern}}"
+        }
+      }
+    }
+  ],
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "defaultValue": "soc-lab-workspace"
+    }
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01-preview",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/crypto-mining-', uniqueString(resourceGroup().id))]",
+      "location": "canadacentral",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Crypto Mining Activity Detected in Azure",
+        "description": "Detects indicators of cryptocurrency mining on Azure VMs including known mining pool connections, high CPU usage spikes reported in metrics, suspicious process names in Syslog, or large outbound connections to mining pool ports (3333, 4444, 5555, 7777, 14433). MITRE ATT&CK: T1496 - Resource Hijacking.",
+        "severity": "High",
+        "enabled": true,
+        "status": "Available",
+        "query": "let miningPools = dynamic([\n    \"pool.minexmr.com\", \"xmrpool.eu\", \"supportxmr.com\",\n    \"nanopool.org\", \"2miners.com\", \"f2pool.com\",\n    \"antpool.com\", \"btc.com\", \"slushpool.com\",\n    \"nicehash.com\", \"miningpoolhub.com\",\n    \"ethermine.org\", \"flexpool.io\"\n]);\nlet miningProcesses = dynamic([\n    \"xmrig\", \"cgminer\", \"bfgminer\", \"cpuminer\",\n    \"minerd\", \"ethminer\", \"t-rex\", \"nbminer\",\n    \"lolminer\", \"gminer\", \"teamredminer\", \"phoenixminer\"\n]);\nlet miningPorts = dynamic([3333, 4444, 5555, 7777, 14433, 45700, 9999, 14444]);\n// DNS queries to known mining pools\nlet dnsHits = DnsEvents\n    | where TimeGenerated >= ago(1h)\n    | where Name has_any (miningPools)\n    | extend ThreatVector = \"DNS_MINING_POOL\", HostName = Computer\n    | project TimeGenerated, HostName, ThreatVector, Detail = Name;\n// Syslog process matches\nlet syslogHits = Syslog\n    | where TimeGenerated >= ago(1h)\n    | where ProcessName has_any (miningProcesses)\n        or SyslogMessage has_any (miningProcesses)\n    | extend ThreatVector = \"PROCESS_MINING\", HostName = HostName\n    | project TimeGenerated, HostName, ThreatVector, Detail = ProcessName;\n// Network connections to mining ports\nlet networkHits = AzureNetworkAnalytics_CL\n    | where TimeGenerated >= ago(1h)\n    | where DestPort_d in (miningPorts)\n    | where FlowDirection_s =~ \"O\"\n    | extend ThreatVector = \"NETWORK_MINING_PORT\", HostName = VM1Name_s\n    | project TimeGenerated, HostName, ThreatVector, Detail = tostring(DestPort_d);\nunion dnsHits, syslogHits, networkHits\n| summarize\n    ThreatVectors  = make_set(ThreatVector),\n    ThreatDetails  = make_set(Detail),\n    HitCount       = count(),\n    FirstSeen      = min(TimeGenerated),\n    LastSeen       = max(TimeGenerated)\n    by HostName\n| where HitCount >= 1\n| extend\n    ConfidenceScore = array_length(ThreatVectors) * 30 + HitCount * 5,\n    Confidence = case(\n        array_length(ThreatVectors) >= 3, \"HIGH\",\n        array_length(ThreatVectors) == 2, \"MEDIUM\",\n        \"LOW\"\n    )\n| project\n    TimeGenerated = FirstSeen,\n    HostName,\n    Confidence,\n    ConfidenceScore,\n    ThreatVectors,\n    ThreatDetails,\n    HitCount,\n    FirstSeen,\n    LastSeen\n| sort by ConfidenceScore desc",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT4H",
+        "suppressionEnabled": false,
+        "tactics": ["Impact"],
+        "techniques": ["T1496"],
+        "entityMappings": [
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              { "identifier": "HostName", "columnName": "HostName" }
+            ]
+          }
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT4H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": ["Host"]
+          }
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Crypto Mining on {{HostName}} — Confidence: {{Confidence}}",
+          "alertDescriptionFormat": "{{HitCount}} indicators across vectors: {{ThreatVectors}}. Details: {{ThreatDetails}}"
+        }
+      }
+    }
+  ],
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "defaultValue": "soc-lab-workspace"
+    }
+  }
+}

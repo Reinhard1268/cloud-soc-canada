@@ -1,0 +1,76 @@
+{
+  "version": "1.0",
+  "description": "KQL queries for Azure Log Analytics SOC monitoring",
+  "queries": [
+    {
+      "id": "azure-failed-logins",
+      "name": "Failed Login Summary (Last 24h)",
+      "category": "Authentication",
+      "severity": "Medium",
+      "kql": "SigninLogs\n| where TimeGenerated >= ago(24h)\n| where ResultType != 0\n| summarize FailCount=count(), DistinctUsers=dcount(UserPrincipalName), DistinctIPs=dcount(IPAddress) by bin(TimeGenerated, 1h)\n| sort by TimeGenerated desc"
+    },
+    {
+      "id": "azure-admin-actions",
+      "name": "Privileged Admin Actions (Last 24h)",
+      "category": "IAM",
+      "severity": "High",
+      "kql": "AuditLogs\n| where TimeGenerated >= ago(24h)\n| where OperationName has_any (\"Add member to role\",\"Remove member from role\",\"Update role\")\n| extend Initiator=tostring(InitiatedBy.user.userPrincipalName), Target=tostring(TargetResources[0].userPrincipalName), Role=tostring(TargetResources[0].displayName)\n| project TimeGenerated, Initiator, Target, Role, OperationName, Result\n| sort by TimeGenerated desc"
+    },
+    {
+      "id": "azure-resource-deletions",
+      "name": "Azure Resource Deletions (Last 24h)",
+      "category": "Impact",
+      "severity": "High",
+      "kql": "AzureActivity\n| where TimeGenerated >= ago(24h)\n| where OperationNameValue has \"delete\" and ActivityStatusValue =~ \"Success\"\n| extend Caller=tostring(Caller), ResourceGroup=tostring(ResourceGroup)\n| summarize DeleteCount=count(), Resources=make_set(Resource) by Caller, ResourceGroup, bin(TimeGenerated, 1h)\n| where DeleteCount >= 2\n| sort by DeleteCount desc"
+    },
+    {
+      "id": "azure-new-service-principals",
+      "name": "New Service Principals Created (Last 7d)",
+      "category": "Persistence",
+      "severity": "Medium",
+      "kql": "AuditLogs\n| where TimeGenerated >= ago(7d)\n| where OperationName == \"Add service principal\"\n| extend CreatedBy=tostring(InitiatedBy.user.userPrincipalName), SPName=tostring(TargetResources[0].displayName)\n| project TimeGenerated, CreatedBy, SPName, Result\n| sort by TimeGenerated desc"
+    },
+    {
+      "id": "azure-storage-access-anomaly",
+      "name": "Anomalous Storage Access (Large Downloads)",
+      "category": "Exfiltration",
+      "severity": "High",
+      "kql": "StorageBlobLogs\n| where TimeGenerated >= ago(24h)\n| where OperationName =~ \"GetBlob\"\n| where ResponseBodySize > 104857600\n| extend CallerIP=tostring(CallerIpAddress)\n| summarize TotalBytes=sum(ResponseBodySize), BlobCount=count() by CallerIP, AccountName, bin(TimeGenerated, 1h)\n| extend TotalMB=round(TotalBytes/1048576.0, 1)\n| sort by TotalMB desc"
+    },
+    {
+      "id": "azure-key-vault-access",
+      "name": "Key Vault Secret/Key Access (Last 24h)",
+      "category": "CredentialAccess",
+      "severity": "Medium",
+      "kql": "AzureDiagnostics\n| where TimeGenerated >= ago(24h)\n| where ResourceType =~ \"VAULTS\" and Category =~ \"AuditEvent\"\n| where OperationName has_any (\"SecretGet\",\"KeyDecrypt\",\"KeySign\",\"SecretList\")\n| extend CallerIP=tostring(clientInfo_s), Identity=tostring(identity_claim_upn_s)\n| project TimeGenerated, OperationName, Identity, CallerIP, ResultType\n| sort by TimeGenerated desc"
+    },
+    {
+      "id": "azure-mfa-disabled",
+      "name": "MFA Disabled or Bypassed Events",
+      "category": "DefenseEvasion",
+      "severity": "Critical",
+      "kql": "AuditLogs\n| where TimeGenerated >= ago(24h)\n| where OperationName has_any (\"Disable Strong Authentication\",\"Update user\",\"Update StsRefreshTokenValidFrom\")\n| extend ModifiedUser=tostring(TargetResources[0].userPrincipalName), ModifiedBy=tostring(InitiatedBy.user.userPrincipalName)\n| project TimeGenerated, OperationName, ModifiedUser, ModifiedBy, Result\n| sort by TimeGenerated desc"
+    },
+    {
+      "id": "azure-conditional-access-failures",
+      "name": "Conditional Access Policy Failures (Last 24h)",
+      "category": "Authentication",
+      "severity": "Medium",
+      "kql": "SigninLogs\n| where TimeGenerated >= ago(24h)\n| where ConditionalAccessStatus =~ \"failure\"\n| extend CADetails=tostring(ConditionalAccessPolicies)\n| summarize FailCount=count(), IPList=make_set(IPAddress) by UserPrincipalName, AppDisplayName, bin(TimeGenerated, 1h)\n| sort by FailCount desc"
+    },
+    {
+      "id": "azure-subscription-owners",
+      "name": "New Subscription Owner Assignments",
+      "category": "PrivilegeEscalation",
+      "severity": "Critical",
+      "kql": "AzureActivity\n| where TimeGenerated >= ago(7d)\n| where OperationNameValue =~ \"microsoft.authorization/roleassignments/write\"\n| where ActivityStatusValue =~ \"Success\"\n| extend Properties=todynamic(Properties)\n| where Properties.requestbody has \"Owner\"\n| extend Caller=tostring(Caller), RoleAssigned=tostring(Properties.requestbody)\n| project TimeGenerated, Caller, RoleAssigned\n| sort by TimeGenerated desc"
+    },
+    {
+      "id": "azure-vm-extensions-added",
+      "name": "VM Extensions Added (Potential Persistence)",
+      "category": "Persistence",
+      "severity": "Medium",
+      "kql": "AzureActivity\n| where TimeGenerated >= ago(7d)\n| where OperationNameValue has \"extensions\" and OperationNameValue has \"write\"\n| where ActivityStatusValue =~ \"Success\"\n| extend Caller=tostring(Caller), VMName=tostring(Resource)\n| project TimeGenerated, Caller, VMName, OperationNameValue\n| sort by TimeGenerated desc"
+    }
+  ]
+}

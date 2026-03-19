@@ -1,0 +1,126 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# 🔍 Threat Detection Dashboard — Cloud SOC Canada\nDetection coverage across Azure AD, Azure Activity, and Security Alerts.\n\n> **Tip:** Use time range picker to scope all panels simultaneously."
+      },
+      "name": "header"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "timeRange",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "value": { "durationMs": 86400000 },
+            "typeSettings": { "selectableValues": [
+              { "durationMs": 3600000,   "text": "Last 1 hour"  },
+              { "durationMs": 86400000,  "text": "Last 24 hours"},
+              { "durationMs": 604800000, "text": "Last 7 days"  }
+            ]}
+          },
+          {
+            "id": "severityFilter",
+            "version": "KqlParameterItem/1.0",
+            "name": "SeverityFilter",
+            "type": 2,
+            "value": "All",
+            "typeSettings": {
+              "staticDropdownValues": [
+                { "value": "All",      "label": "All Severities" },
+                { "value": "Critical", "label": "Critical" },
+                { "value": "High",     "label": "High" },
+                { "value": "Medium",   "label": "Medium" }
+              ]
+            }
+          }
+        ]
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let brute = SigninLogs\n    | where TimeGenerated {TimeRange}\n    | where ResultType != 0\n    | summarize Fails=count() by UserPrincipalName, bin(TimeGenerated, 10m)\n    | where Fails >= 10\n    | extend Category=\"Brute Force\", Severity=\"High\";\nlet privEsc = AuditLogs\n    | where TimeGenerated {TimeRange}\n    | where OperationName has \"Add member to role\"\n    | extend Category=\"Privilege Escalation\", Severity=\"High\", UserPrincipalName=tostring(InitiatedBy.user.userPrincipalName)\n    | project TimeGenerated, Category, Severity, UserPrincipalName;\nlet suspicious = AzureActivity\n    | where TimeGenerated {TimeRange}\n    | where OperationNameValue has \"delete\" and ActivityStatusValue =~ \"Success\"\n    | summarize Deletes=count() by Caller, bin(TimeGenerated, 15m)\n    | where Deletes >= 5\n    | extend Category=\"Bulk Deletion\", Severity=\"High\", UserPrincipalName=Caller;\nunion brute, privEsc, suspicious\n| where '{SeverityFilter}' == \"All\" or Severity == '{SeverityFilter}'\n| summarize AlertCount=count() by Category\n| order by AlertCount desc",
+        "size": 3,
+        "title": "Threat Categories Detected",
+        "queryType": 0,
+        "visualization": "barchart"
+      },
+      "name": "threatCategoriesChart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "SecurityAlert\n| where TimeGenerated {TimeRange}\n| where '{SeverityFilter}' == \"All\" or AlertSeverity == '{SeverityFilter}'\n| project TimeGenerated, AlertName, AlertSeverity, Description, CompromisedEntity, Tactics\n| order by TimeGenerated desc\n| limit 100",
+        "size": 1,
+        "title": "Security Alerts — Detail View",
+        "queryType": 0,
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "AlertSeverity",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  { "operator": "==", "thresholdValue": "Critical", "representation": "#ff0000" },
+                  { "operator": "==", "thresholdValue": "High",     "representation": "#ff8c00" },
+                  { "operator": "==", "thresholdValue": "Medium",   "representation": "#ffd700" },
+                  { "operator": "Default", "thresholdValue": null,  "representation": "#00ff00" }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "alertsTable"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AuditLogs\n| where TimeGenerated {TimeRange}\n| where OperationName has_any (\"Add member to role\",\"Add eligible member\",\"Remove member from role\")\n| extend\n    Actor  = tostring(InitiatedBy.user.userPrincipalName),\n    Target = tostring(TargetResources[0].userPrincipalName),\n    Role   = tostring(TargetResources[0].displayName)\n| summarize Changes=count() by Actor, bin(TimeGenerated, 1h)\n| order by Changes desc\n| limit 20",
+        "size": 1,
+        "title": "Most Active Role Change Actors",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "roleChangeActors"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "SigninLogs\n| where TimeGenerated {TimeRange}\n| where ResultType == 0\n| extend Country=tostring(LocationDetails.countryOrRegion)\n| summarize Logins=count(), Users=dcount(UserPrincipalName) by Country\n| where Country != \"\"\n| order by Logins desc\n| limit 20",
+        "size": 1,
+        "title": "Successful Logins by Country",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "loginsByCountry"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureActivity\n| where TimeGenerated {TimeRange}\n| where ActivityStatusValue =~ \"Success\"\n| summarize Ops=count() by OperationNameValue\n| top 15 by Ops desc",
+        "size": 1,
+        "title": "Top Azure Operations",
+        "queryType": 0,
+        "visualization": "barchart"
+      },
+      "name": "topOperations"
+    }
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

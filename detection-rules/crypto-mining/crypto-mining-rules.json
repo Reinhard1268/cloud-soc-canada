@@ -1,0 +1,120 @@
+{
+  "version": "1.0",
+  "description": "Cryptocurrency mining detection rules for AWS and Azure cloud environments",
+  "rules": [
+    {
+      "id": "crypto-001",
+      "name": "GuardDuty CryptoCurrency Finding",
+      "description": "Detects GuardDuty CryptoCurrency finding types indicating EC2 or container instances performing mining activities. MITRE T1496.",
+      "severity": "high",
+      "platform": "aws",
+      "index": ["aws-guardduty-findings"],
+      "query": {
+        "bool": {
+          "must": [
+            { "wildcard": { "aws.guardduty.finding_type": "CryptoCurrency:*" }}
+          ]
+        }
+      },
+      "mitre": ["T1496"],
+      "tags": ["crypto-mining", "guardduty", "aws"]
+    },
+    {
+      "id": "crypto-002",
+      "name": "Connection to Known Mining Pool Domain (DNS)",
+      "description": "Detects DNS queries to known cryptocurrency mining pool hostnames. MITRE T1496.",
+      "severity": "high",
+      "platform": "both",
+      "index": ["aws-cloudtrail-events", "azure-sentinel-alerts"],
+      "miningDomains": [
+        "pool.minexmr.com", "xmrpool.eu", "supportxmr.com",
+        "nanopool.org", "2miners.com", "f2pool.com",
+        "antpool.com", "slushpool.com", "nicehash.com",
+        "ethermine.org", "flexpool.io", "hiveon.net",
+        "miningpoolhub.com", "prohashing.com", "unmineable.com"
+      ],
+      "miningPorts": [3333, 4444, 5555, 7777, 9999, 14433, 14444, 45700],
+      "mitre": ["T1496"],
+      "tags": ["crypto-mining", "dns", "network"]
+    },
+    {
+      "id": "crypto-003",
+      "name": "High EC2 CPU — Potential Mining (CloudWatch)",
+      "description": "Detects sustained high CPU utilisation on EC2 instances (>85% for >30 min) which may indicate crypto mining. MITRE T1496.",
+      "severity": "medium",
+      "platform": "aws",
+      "cloudwatchMetric": {
+        "namespace": "AWS/EC2",
+        "metric":    "CPUUtilization",
+        "threshold": 85,
+        "period":    1800,
+        "statistic": "Average",
+        "comparisonOperator": "GreaterThanThreshold"
+      },
+      "mitre": ["T1496"],
+      "tags": ["crypto-mining", "cpu", "cloudwatch", "aws"]
+    },
+    {
+      "id": "crypto-004",
+      "name": "AWS EC2 Spot Instance Fleet Created (Opportunistic Compute)",
+      "description": "Detects creation of large EC2 Spot Instance fleets (>10 instances) by non-standard users — indicator of unauthorized mining at scale. MITRE T1496, T1578.",
+      "severity": "high",
+      "platform": "aws",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "terms": { "event.action": ["RequestSpotFleet", "CreateFleet", "RunInstances"] }},
+            { "term":  { "event.outcome": "success" }}
+          ]
+        }
+      },
+      "threshold": { "field": "aws.cloudtrail.request_params.instanceCount", "value": 10 },
+      "mitre": ["T1496", "T1578"],
+      "tags": ["crypto-mining", "ec2", "spot-fleet", "aws"]
+    },
+    {
+      "id": "crypto-005",
+      "name": "XMRig / Mining Process Detected in Syslog",
+      "description": "Detects known mining process names in Linux syslog entries from Azure VMs or EC2 instances. MITRE T1496.",
+      "severity": "critical",
+      "platform": "both",
+      "miningProcesses": [
+        "xmrig", "xmr-stak", "cpuminer", "cgminer",
+        "bfgminer", "minerd", "ethminer", "t-rex",
+        "nbminer", "lolminer", "gminer", "teamredminer",
+        "phoenixminer", "srbminer", "kawpowminer"
+      ],
+      "index": ["syslog-*"],
+      "query": {
+        "bool": {
+          "should": [
+            { "terms": { "process.name": ["xmrig","xmr-stak","cpuminer","cgminer","ethminer","nbminer"] }},
+            { "terms": { "message": ["stratum+tcp","stratum+ssl","mining.subscribe","mining.authorize"] }}
+          ],
+          "minimum_should_match": 1
+        }
+      },
+      "mitre": ["T1496"],
+      "tags": ["crypto-mining", "process", "syslog"]
+    },
+    {
+      "id": "crypto-006",
+      "name": "Outbound Network Traffic to Mining Ports",
+      "description": "Detects outbound connections to known Stratum mining protocol ports from cloud VMs. MITRE T1496.",
+      "severity": "high",
+      "platform": "both",
+      "ports": [3333, 4444, 5555, 7777, 9999, 14433, 14444, 45700],
+      "query": {
+        "bool": {
+          "must": [
+            { "terms": { "destination.port": [3333, 4444, 5555, 7777, 9999, 14433, 14444, 45700] }},
+            { "term":  { "network.direction": "outbound" }}
+          ]
+        }
+      },
+      "mitre": ["T1496"],
+      "tags": ["crypto-mining", "network", "stratum"]
+    }
+  ]
+}

@@ -1,0 +1,161 @@
+{
+  "version": "1.0",
+  "description": "AWS IAM privilege escalation detection rules for Elasticsearch/Kibana SIEM",
+  "rules": [
+    {
+      "id": "aws-iam-001",
+      "name": "IAM Policy Attached to User Directly",
+      "description": "Detects when an IAM policy is attached directly to a user account rather than a group (bypasses least-privilege controls). MITRE T1098.",
+      "severity": "medium",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "term": { "aws.cloudtrail.event_type": "AwsApiCall" }},
+            { "term": { "event.action": "AttachUserPolicy" }},
+            { "term": { "event.outcome": "success" }}
+          ]
+        }
+      },
+      "threshold": { "field": "user.name", "value": 1 },
+      "interval": "5m",
+      "lookback": "5m",
+      "mitre": ["T1098"],
+      "tags": ["iam", "privilege-escalation", "aws"]
+    },
+    {
+      "id": "aws-iam-002",
+      "name": "IAM Admin Policy Attached (AdministratorAccess)",
+      "description": "Detects attachment of the AWS-managed AdministratorAccess policy to any principal. Critical escalation indicator. MITRE T1078.",
+      "severity": "critical",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "terms": { "event.action": ["AttachUserPolicy", "AttachRolePolicy", "AttachGroupPolicy"] }},
+            { "wildcard": { "aws.cloudtrail.request_params.policyArn": "*AdministratorAccess*" }},
+            { "term": { "event.outcome": "success" }}
+          ]
+        }
+      },
+      "threshold": { "field": "user.name", "value": 1 },
+      "interval": "1m",
+      "lookback": "5m",
+      "mitre": ["T1078", "T1098"],
+      "tags": ["iam", "privilege-escalation", "critical", "aws"]
+    },
+    {
+      "id": "aws-iam-003",
+      "name": "IAM User Created and Policy Attached in Same Session",
+      "description": "Detects a create-user action followed immediately by a policy attachment — indicator of unauthorized account provisioning. MITRE T1136.",
+      "severity": "high",
+      "index": ["aws-cloudtrail-events"],
+      "sequence": [
+        {
+          "query": { "term": { "event.action": "CreateUser" }},
+          "by": "user.name"
+        },
+        {
+          "query": { "terms": { "event.action": ["AttachUserPolicy", "AddUserToGroup"] }},
+          "by": "user.name",
+          "maxspan": "5m"
+        }
+      ],
+      "mitre": ["T1136", "T1098"],
+      "tags": ["iam", "privilege-escalation", "account-creation", "aws"]
+    },
+    {
+      "id": "aws-iam-004",
+      "name": "IAM Inline Policy with Wildcard Actions Added",
+      "description": "Detects creation of inline policies containing wildcard actions ('*') which grant unrestricted permissions. MITRE T1098.",
+      "severity": "high",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "terms": { "event.action": ["PutUserPolicy", "PutRolePolicy", "PutGroupPolicy"] }},
+            { "wildcard": { "aws.cloudtrail.request_params.policyDocument": "*\"Action\":\"*\"*" }},
+            { "term": { "event.outcome": "success" }}
+          ]
+        }
+      },
+      "mitre": ["T1098"],
+      "tags": ["iam", "wildcard-policy", "aws"]
+    },
+    {
+      "id": "aws-iam-005",
+      "name": "Root Account Used",
+      "description": "Detects any API activity using the AWS root account. Root usage is a critical security event. MITRE T1078.004.",
+      "severity": "critical",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "term": { "aws.cloudtrail.user_identity.type": "Root" }}
+          ],
+          "must_not": [
+            { "term": { "event.action": "AwsServiceEvent" }}
+          ]
+        }
+      },
+      "mitre": ["T1078.004"],
+      "tags": ["iam", "root-account", "critical", "aws"]
+    },
+    {
+      "id": "aws-iam-006",
+      "name": "IAM Access Key Created for Root Account",
+      "description": "Detects creation of access keys for the root account — a high-risk configuration. MITRE T1098.",
+      "severity": "critical",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "term": { "event.action": "CreateAccessKey" }},
+            { "term": { "aws.cloudtrail.user_identity.type": "Root" }}
+          ]
+        }
+      },
+      "mitre": ["T1098"],
+      "tags": ["iam", "root-account", "access-key", "aws"]
+    },
+    {
+      "id": "aws-iam-007",
+      "name": "IAM Role Trust Policy Modified",
+      "description": "Detects modifications to IAM role trust policies which can enable cross-account or external access. MITRE T1098.",
+      "severity": "high",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "term": { "event.action": "UpdateAssumeRolePolicy" }},
+            { "term": { "event.outcome": "success" }}
+          ]
+        }
+      },
+      "mitre": ["T1098"],
+      "tags": ["iam", "trust-policy", "cross-account", "aws"]
+    },
+    {
+      "id": "aws-iam-008",
+      "name": "Bulk IAM Operations (Enumeration)",
+      "description": "Detects high-rate IAM read operations — indicator of credential enumeration or reconnaissance. MITRE T1069, T1087.",
+      "severity": "medium",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "terms": { "event.action": [
+              "ListUsers", "ListRoles", "ListGroups", "ListPolicies",
+              "GetUser", "GetRole", "ListAttachedUserPolicies",
+              "ListAttachedRolePolicies", "ListGroupsForUser"
+            ]}},
+            { "term": { "aws.cloudtrail.read_only": true }}
+          ]
+        }
+      },
+      "threshold": { "field": "user.name", "value": 20, "timeWindow": "5m" },
+      "mitre": ["T1069", "T1087"],
+      "tags": ["iam", "enumeration", "reconnaissance", "aws"]
+    }
+  ]
+}

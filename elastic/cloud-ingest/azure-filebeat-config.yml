@@ -1,0 +1,112 @@
+# =============================================================
+# azure-filebeat-config.yml
+# Filebeat configuration for ingesting Azure Monitor,
+# Sentinel, and Activity logs into Elasticsearch
+# =============================================================
+
+filebeat.inputs:
+
+  # ── Azure Activity Logs ────────────────────────────────────
+  - type: azure-eventhub
+    enabled: true
+    eventhub: "soc-lab-activity-logs"
+    consumer_group: "$Default"
+    connection_string: "${AZURE_EVENTHUB_CONNECTION_STRING:}"
+    storage_account: "${AZURE_STORAGE_ACCOUNT:}"
+    storage_account_key: "${AZURE_STORAGE_ACCOUNT_KEY:}"
+    resource_manager_endpoint: "https://management.azure.com/"
+    tags: ["azure", "activity-logs", "canadacentral"]
+    fields:
+      cloud_provider: azure
+      log_type: activity
+      soc_project: "06-cloud-soc-canada"
+    fields_under_root: false
+
+  # ── Azure AD Sign-In Logs ──────────────────────────────────
+  - type: azure-eventhub
+    enabled: true
+    eventhub: "soc-lab-signin-logs"
+    consumer_group: "$Default"
+    connection_string: "${AZURE_EVENTHUB_SIGNIN_CONNECTION_STRING:}"
+    storage_account: "${AZURE_STORAGE_ACCOUNT:}"
+    storage_account_key: "${AZURE_STORAGE_ACCOUNT_KEY:}"
+    tags: ["azure", "signinlogs", "canadacentral"]
+    fields:
+      cloud_provider: azure
+      log_type: signinlogs
+    fields_under_root: false
+
+  # ── Azure Security Alerts ──────────────────────────────────
+  - type: azure-eventhub
+    enabled: true
+    eventhub: "soc-lab-security-alerts"
+    consumer_group: "$Default"
+    connection_string: "${AZURE_EVENTHUB_SECURITY_CONNECTION_STRING:}"
+    storage_account: "${AZURE_STORAGE_ACCOUNT:}"
+    storage_account_key: "${AZURE_STORAGE_ACCOUNT_KEY:}"
+    tags: ["azure", "security-alerts", "sentinel", "canadacentral"]
+    fields:
+      cloud_provider: azure
+      log_type: security-alert
+    fields_under_root: false
+
+filebeat.modules:
+  - module: azure
+    activitylogs:
+      enabled: true
+      var.eventhub: "soc-lab-activity-logs"
+      var.consumer_group: "$Default"
+      var.connection_string: "${AZURE_EVENTHUB_CONNECTION_STRING:}"
+      var.storage_account: "${AZURE_STORAGE_ACCOUNT:}"
+      var.storage_account_key: "${AZURE_STORAGE_ACCOUNT_KEY:}"
+    signinlogs:
+      enabled: true
+      var.eventhub: "soc-lab-signin-logs"
+      var.consumer_group: "$Default"
+      var.connection_string: "${AZURE_EVENTHUB_SIGNIN_CONNECTION_STRING:}"
+      var.storage_account: "${AZURE_STORAGE_ACCOUNT:}"
+      var.storage_account_key: "${AZURE_STORAGE_ACCOUNT_KEY:}"
+
+processors:
+  - add_host_metadata: ~
+  - add_cloud_metadata: ~
+  - rename:
+      fields:
+        - from: "azure.activitylogs.caller"
+          to:   "user.name"
+        - from: "azure.signinlogs.properties.userPrincipalName"
+          to:   "user.email"
+      ignore_missing: true
+      fail_on_error: false
+
+output.elasticsearch:
+  hosts: ["${ELASTIC_URL:http://localhost:9200}"]
+  username: "${ELASTIC_USER:elastic}"
+  password: "${ELASTIC_PASSWORD:}"
+  index: "filebeat-azure-%{[agent.version]}-%{+yyyy.MM.dd}"
+  pipeline: "azure-logs-pipeline"
+  ssl.verification_mode: none
+  bulk_max_size: 500
+  worker: 2
+
+setup.template:
+  name: "filebeat-azure"
+  pattern: "filebeat-azure-*"
+  overwrite: false
+
+setup.ilm.enabled: true
+setup.ilm.rollover_alias: "filebeat-azure"
+
+setup.kibana:
+  host: "${KIBANA_URL:http://localhost:5601}"
+  username: "${ELASTIC_USER:elastic}"
+  password: "${ELASTIC_PASSWORD:}"
+
+logging:
+  level: info
+  to_files: true
+  files:
+    path: /var/log/filebeat
+    name: filebeat-azure
+    keepfiles: 7
+    permissions: 0640

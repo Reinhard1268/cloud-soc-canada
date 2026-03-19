@@ -1,0 +1,143 @@
+{
+  "version": "1.0",
+  "description": "Unauthorized access detection rules for AWS and Azure cloud environments",
+  "rules": [
+    {
+      "id": "unauth-001",
+      "name": "AWS Console Login Without MFA",
+      "description": "Detects successful AWS Management Console logins where MFA was not used. MITRE T1078.",
+      "severity": "high",
+      "platform": "aws",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "term": { "event.action": "ConsoleLogin" }},
+            { "term": { "event.outcome": "success" }},
+            { "term": { "aws.cloudtrail.request_params.MFAUsed": "No" }}
+          ]
+        }
+      },
+      "mitre": ["T1078"],
+      "tags": ["unauthorized-access", "mfa", "console", "aws"]
+    },
+    {
+      "id": "unauth-002",
+      "name": "AWS API Call from Tor Exit Node",
+      "description": "Detects AWS API calls originating from known Tor exit node IP addresses. MITRE T1090.003.",
+      "severity": "high",
+      "platform": "aws",
+      "index": ["aws-cloudtrail-events"],
+      "guarddutyFindingType": "UnauthorizedAccess:IAMUser/TorIPCaller",
+      "query": {
+        "bool": {
+          "must": [
+            { "term":  { "event.outcome": "success" }},
+            { "exists": { "field": "source.ip" }}
+          ],
+          "filter": [
+            { "term": { "source.as.organization": "Tor Project" }}
+          ]
+        }
+      },
+      "mitre": ["T1090.003"],
+      "tags": ["unauthorized-access", "tor", "anonymization", "aws"]
+    },
+    {
+      "id": "unauth-003",
+      "name": "Multiple AWS Regions Accessed (Impossible Geographic Access)",
+      "description": "Detects the same IAM identity making API calls in 3+ AWS regions within 10 minutes — indicator of credential compromise. MITRE T1078.",
+      "severity": "high",
+      "platform": "aws",
+      "index": ["aws-cloudtrail-events"],
+      "aggregation": {
+        "field": "user.id",
+        "groupBy": "cloud.region",
+        "threshold": 3,
+        "timeWindow": "10m"
+      },
+      "mitre": ["T1078"],
+      "tags": ["unauthorized-access", "multi-region", "credential-compromise", "aws"]
+    },
+    {
+      "id": "unauth-004",
+      "name": "AWS Access Key Used After Long Dormancy",
+      "description": "Detects use of an IAM access key that has not been used in >90 days — may indicate theft of old credentials. MITRE T1078.",
+      "severity": "high",
+      "platform": "aws",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "term":  { "event.outcome": "success" }},
+            { "exists": { "field": "aws.cloudtrail.user_identity" }}
+          ]
+        }
+      },
+      "note": "Correlate with IAM credential report to find keys not used in 90+ days. Run: aws iam generate-credential-report",
+      "mitre": ["T1078"],
+      "tags": ["unauthorized-access", "dormant-key", "aws"]
+    },
+    {
+      "id": "unauth-005",
+      "name": "Azure AD Login from Blacklisted Country",
+      "description": "Detects successful Azure AD logins from countries not in the approved list for this organisation. MITRE T1078.",
+      "severity": "high",
+      "platform": "azure",
+      "logSource": "SigninLogs",
+      "kql": "let blockedCountries = dynamic([\"RU\",\"CN\",\"KP\",\"IR\",\"SY\",\"BY\"]);\nSigninLogs\n| where TimeGenerated >= ago(1h)\n| where ResultType == 0\n| extend CountryCode=tostring(LocationDetails.countryOrRegion)\n| where CountryCode in (blockedCountries)\n| project TimeGenerated, UserPrincipalName, CountryCode, IPAddress, AppDisplayName, ResultType",
+      "mitre": ["T1078"],
+      "tags": ["unauthorized-access", "geo-block", "azure"]
+    },
+    {
+      "id": "unauth-006",
+      "name": "Service Principal Login from External Network",
+      "description": "Detects service principal sign-ins from IP ranges outside Azure/trusted networks — potential service account compromise. MITRE T1078.004.",
+      "severity": "high",
+      "platform": "azure",
+      "logSource": "SigninLogs",
+      "kql": "SigninLogs\n| where TimeGenerated >= ago(1h)\n| where ResultType == 0\n| where UserType =~ \"servicePrincipal\"\n| where IPAddress !startswith \"10.\" and IPAddress !startswith \"172.\" and IPAddress !startswith \"192.168.\"\n| where IPAddress !startswith \"20.\" and IPAddress !startswith \"40.\"\n| project TimeGenerated, UserPrincipalName, IPAddress, AppDisplayName, UserType",
+      "mitre": ["T1078.004"],
+      "tags": ["unauthorized-access", "service-principal", "azure"]
+    },
+    {
+      "id": "unauth-007",
+      "name": "AWS GuardDuty Unauthorized Access Finding",
+      "description": "Passthrough rule for all GuardDuty UnauthorizedAccess finding types. MITRE T1078.",
+      "severity": "high",
+      "platform": "aws",
+      "index": ["aws-guardduty-findings"],
+      "query": {
+        "bool": {
+          "must": [
+            { "wildcard": { "aws.guardduty.finding_type": "UnauthorizedAccess:*" }}
+          ]
+        }
+      },
+      "mitre": ["T1078"],
+      "tags": ["unauthorized-access", "guardduty", "aws"]
+    },
+    {
+      "id": "unauth-008",
+      "name": "Repeated Authentication Failures Followed by Success (Brute Force)",
+      "description": "Detects 10+ failed logins followed by a successful login within 30 minutes for the same account. MITRE T1110.",
+      "severity": "critical",
+      "platform": "both",
+      "index": ["aws-cloudtrail-events", "azure-sentinel-alerts"],
+      "sequence": [
+        {
+          "query": { "term": { "event.outcome": "failure" }},
+          "by": "user.name",
+          "count": 10
+        },
+        {
+          "query": { "term": { "event.outcome": "success" }},
+          "by": "user.name",
+          "maxspan": "30m"
+        }
+      ],
+      "mitre": ["T1110"],
+      "tags": ["unauthorized-access", "brute-force", "credential-access"]
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01-preview",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/new-admin-account-', uniqueString(resourceGroup().id))]",
+      "location": "canadacentral",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Privileged Role Assigned to New Account (< 7 Days Old)",
+        "description": "Detects when a Global Administrator, Privileged Role Administrator, or other high-privilege role is assigned to an account that was created fewer than 7 days ago. This is a critical indicator of potential account compromise or insider threat. MITRE ATT&CK: T1136 - Create Account, T1098 - Account Manipulation.",
+        "severity": "Critical",
+        "enabled": true,
+        "status": "Available",
+        "query": "let privilegedRoles = dynamic([\n    \"Global Administrator\",\n    \"Privileged Role Administrator\",\n    \"Security Administrator\",\n    \"Exchange Administrator\",\n    \"SharePoint Administrator\",\n    \"User Access Administrator\",\n    \"Helpdesk Administrator\",\n    \"Compliance Administrator\",\n    \"Application Administrator\",\n    \"Cloud Application Administrator\"\n]);\nlet lookback = 7d;\nAuditLogs\n| where TimeGenerated >= ago(1h)\n| where OperationName has_any (\"Add member to role\", \"Add eligible member to role\")\n| where Result == \"success\"\n| extend\n    AssignedRole       = tostring(TargetResources[0].displayName),\n    TargetUPN          = tostring(TargetResources[0].userPrincipalName),\n    TargetId           = tostring(TargetResources[0].id),\n    AssignedByUPN      = tostring(InitiatedBy.user.userPrincipalName),\n    AssignedByApp      = tostring(InitiatedBy.app.displayName)\n| where AssignedRole in (privilegedRoles)\n| join kind=inner (\n    AuditLogs\n    | where TimeGenerated >= ago(lookback + 1h)\n    | where OperationName == \"Add user\"\n    | extend\n        NewUserUPN      = tostring(TargetResources[0].userPrincipalName),\n        NewUserId       = tostring(TargetResources[0].id),\n        AccountCreated  = TimeGenerated\n    | project NewUserUPN, NewUserId, AccountCreated\n) on $left.TargetUPN == $right.NewUserUPN\n| extend\n    AccountAgeDays = datetime_diff('day', TimeGenerated, AccountCreated),\n    AccountAgeHours = datetime_diff('hour', TimeGenerated, AccountCreated)\n| where AccountAgeDays < 7\n| extend\n    RiskJustification = strcat(\n        \"Account created \", tostring(AccountAgeDays), \" day(s) ago. \",\n        \"Role '\", AssignedRole, \"' assigned by \", AssignedByUPN\n    )\n| project\n    TimeGenerated,\n    TargetUPN,\n    AssignedRole,\n    AssignedByUPN,\n    AssignedByApp,\n    AccountCreated,\n    AccountAgeDays,\n    AccountAgeHours,\n    RiskJustification",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P7D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT24H",
+        "suppressionEnabled": false,
+        "tactics": ["Persistence", "PrivilegeEscalation"],
+        "techniques": ["T1136", "T1098"],
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              { "identifier": "FullName", "columnName": "TargetUPN" }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              { "identifier": "FullName", "columnName": "AssignedByUPN" }
+            ]
+          }
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": true,
+            "lookbackDuration": "PT24H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": ["Account"]
+          }
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "CRITICAL: New Account {{TargetUPN}} Assigned {{AssignedRole}}",
+          "alertDescriptionFormat": "{{RiskJustification}}"
+        }
+      }
+    }
+  ],
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "defaultValue": "soc-lab-workspace"
+    }
+  }
+}

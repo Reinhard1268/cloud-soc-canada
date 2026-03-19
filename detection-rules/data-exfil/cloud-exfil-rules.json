@@ -1,0 +1,150 @@
+{
+  "version": "1.0",
+  "description": "Cloud data exfiltration detection rules for AWS and Azure",
+  "rules": [
+    {
+      "id": "exfil-001",
+      "name": "Large S3 Download by External IP",
+      "description": "Detects GetObject operations totalling >500 MB from a single external IP within 1 hour. MITRE T1530.",
+      "severity": "high",
+      "platform": "aws",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "term":  { "event.action": "GetObject" }},
+            { "term":  { "event.outcome": "success" }},
+            { "range": { "aws.cloudtrail.response_elems.contentLength": { "gte": 10485760 }}}
+          ],
+          "must_not": [
+            { "cidr": { "source.ip": { "value": "10.0.0.0/8" }}},
+            { "cidr": { "source.ip": { "value": "172.16.0.0/12" }}},
+            { "cidr": { "source.ip": { "value": "192.168.0.0/16" }}}
+          ]
+        }
+      },
+      "threshold": {
+        "field": "source.ip",
+        "value": 500,
+        "unit": "megabytes",
+        "aggregateField": "aws.cloudtrail.response_elems.contentLength",
+        "timeWindow": "1h"
+      },
+      "mitre": ["T1530"],
+      "tags": ["exfiltration", "s3", "aws"]
+    },
+    {
+      "id": "exfil-002",
+      "name": "S3 Bucket Made Public",
+      "description": "Detects changes to S3 bucket ACL or policy that grant public access. MITRE T1530, T1537.",
+      "severity": "critical",
+      "platform": "aws",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "terms": { "event.action": ["PutBucketAcl", "PutBucketPolicy"] }},
+            { "term":  { "event.outcome": "success" }},
+            {
+              "bool": {
+                "should": [
+                  { "term": { "aws.cloudtrail.request_params.AccessControlPolicy.AccessControlList.Grant.Grantee.URI": "http://acs.amazonaws.com/groups/global/AllUsers" }},
+                  { "wildcard": { "aws.cloudtrail.request_params": "*AllUsers*" }}
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "mitre": ["T1530", "T1537"],
+      "tags": ["exfiltration", "s3", "public-access", "aws"]
+    },
+    {
+      "id": "exfil-003",
+      "name": "S3 Cross-Account Replication Enabled",
+      "description": "Detects creation of S3 replication rules that copy data to a different AWS account. MITRE T1537.",
+      "severity": "high",
+      "platform": "aws",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "term": { "event.action": "PutBucketReplication" }},
+            { "term": { "event.outcome": "success" }}
+          ]
+        }
+      },
+      "note": "Investigate: is destination bucket in same AWS account? Cross-account replication is high-risk.",
+      "mitre": ["T1537"],
+      "tags": ["exfiltration", "s3", "replication", "cross-account", "aws"]
+    },
+    {
+      "id": "exfil-004",
+      "name": "RDS Snapshot Exported to External Account",
+      "description": "Detects RDS DB snapshots shared with or copied to external AWS accounts. MITRE T1537.",
+      "severity": "critical",
+      "platform": "aws",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "terms": { "event.action": ["ModifyDBSnapshotAttribute", "CopyDBSnapshot"] }},
+            { "term":  { "event.outcome": "success" }}
+          ]
+        }
+      },
+      "mitre": ["T1537"],
+      "tags": ["exfiltration", "rds", "snapshot", "aws"]
+    },
+    {
+      "id": "exfil-005",
+      "name": "Azure Blob Storage Large Download (>500MB)",
+      "description": "Detects large blob downloads from Azure Storage from external IPs. MITRE T1530.",
+      "severity": "high",
+      "platform": "azure",
+      "logSource": "StorageBlobLogs",
+      "kql": "StorageBlobLogs\n| where TimeGenerated >= ago(1h)\n| where OperationName =~ \"GetBlob\"\n| where ResponseBodySize > 524288000\n| extend CallerIP=tostring(CallerIpAddress)\n| where CallerIP !startswith \"10.\" and CallerIP !startswith \"172.\" and CallerIP !startswith \"192.168.\"\n| summarize TotalBytes=sum(ResponseBodySize), DownloadCount=count() by CallerIP, AccountName, bin(TimeGenerated, 1h)\n| extend TotalMB=round(TotalBytes/1048576.0, 1)\n| where TotalMB > 500",
+      "mitre": ["T1530"],
+      "tags": ["exfiltration", "blob-storage", "azure"]
+    },
+    {
+      "id": "exfil-006",
+      "name": "CloudTrail Logging Disabled",
+      "description": "Detects disabling of CloudTrail — attacker may disable logging before exfiltration. MITRE T1562.008.",
+      "severity": "critical",
+      "platform": "aws",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "term": { "event.action": "StopLogging" }},
+            { "term": { "event.outcome": "success" }}
+          ]
+        }
+      },
+      "mitre": ["T1562.008"],
+      "tags": ["defense-evasion", "cloudtrail", "logging-disabled", "aws"]
+    },
+    {
+      "id": "exfil-007",
+      "name": "Secrets Manager Secret Accessed by Unknown Role",
+      "description": "Detects GetSecretValue API calls from roles not in the approved list. MITRE T1552.001.",
+      "severity": "high",
+      "platform": "aws",
+      "index": ["aws-cloudtrail-events"],
+      "query": {
+        "bool": {
+          "must": [
+            { "term": { "event.action": "GetSecretValue" }},
+            { "term": { "event.outcome": "success" }}
+          ],
+          "must_not": [
+            { "terms": { "user.name": ["approved-lambda-role", "approved-app-role", "deploy-role"] }}
+          ]
+        }
+      },
+      "mitre": ["T1552.001"],
+      "tags": ["credential-access", "secrets-manager", "aws"]
+    }
+  ]
+}

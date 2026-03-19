@@ -1,0 +1,130 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# ☁️ Cloud SOC Overview — Canada Region\n**Project:** 06-cloud-soc-canada | **Region:** canadacentral / ca-central-1\n\nUse the time range picker above to adjust the monitoring window."
+      },
+      "name": "title"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "timeRange",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "value": { "durationMs": 86400000 },
+            "typeSettings": { "selectableValues": [
+              { "durationMs": 3600000,   "text": "Last 1 hour"  },
+              { "durationMs": 14400000,  "text": "Last 4 hours" },
+              { "durationMs": 86400000,  "text": "Last 24 hours"},
+              { "durationMs": 604800000, "text": "Last 7 days"  }
+            ]}
+          }
+        ]
+      },
+      "name": "timeRangePicker"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "SigninLogs\n| where TimeGenerated {TimeRange}\n| summarize\n    TotalLogins = count(),\n    FailedLogins = countif(ResultType != 0),\n    SuccessRate = round(countif(ResultType == 0) * 100.0 / count(), 1)\n| extend Label = \"Sign-In Summary\"",
+        "size": 4,
+        "title": "Azure AD Sign-In Summary",
+        "queryType": 0,
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": { "columnMatch": "Label" },
+          "leftContent":  { "columnMatch": "TotalLogins",  "formatter": 12 },
+          "rightContent": { "columnMatch": "SuccessRate",  "formatter": 1  }
+        }
+      },
+      "name": "signinSummary"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "SigninLogs\n| where TimeGenerated {TimeRange}\n| where ResultType != 0\n| summarize FailCount=count() by bin(TimeGenerated, 1h)\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Failed Sign-Ins Over Time",
+        "queryType": 0,
+        "visualization": "timechart"
+      },
+      "name": "failedLoginsChart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AuditLogs\n| where TimeGenerated {TimeRange}\n| where OperationName has_any (\"Add member to role\",\"Remove member from role\",\"Update role\")\n| extend Initiator=tostring(InitiatedBy.user.userPrincipalName), Role=tostring(TargetResources[0].displayName)\n| project TimeGenerated, Initiator, Role, OperationName, Result\n| order by TimeGenerated desc\n| limit 50",
+        "size": 1,
+        "title": "Recent Role Changes",
+        "queryType": 0,
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Result", "formatter": 18,
+              "formatOptions": { "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  { "operator": "==", "thresholdValue": "success", "representation": "success" },
+                  { "operator": "Default", "thresholdValue": null,  "representation": "failed"  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "name": "roleChangesTable"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureActivity\n| where TimeGenerated {TimeRange}\n| where OperationNameValue has \"delete\" and ActivityStatusValue =~ \"Success\"\n| summarize DeleteCount=count() by Caller, ResourceGroup\n| where DeleteCount >= 1\n| top 20 by DeleteCount desc",
+        "size": 1,
+        "title": "Top Resource Deletions by Caller",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "deletionsTable"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "SecurityAlert\n| where TimeGenerated {TimeRange}\n| summarize AlertCount=count() by AlertSeverity\n| order by AlertCount desc",
+        "size": 3,
+        "title": "Security Alerts by Severity",
+        "queryType": 0,
+        "visualization": "piechart"
+      },
+      "name": "alertSeverityPie"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "SigninLogs\n| where TimeGenerated {TimeRange}\n| where ResultType == 0\n| extend Country=tostring(LocationDetails.countryOrRegion)\n| where Country !in (\"\", \"CA\", \"Canada\")\n| summarize ForeignLogins=count() by Country\n| top 15 by ForeignLogins desc",
+        "size": 1,
+        "title": "Non-Canadian Sign-Ins (Top 15 Countries)",
+        "queryType": 0,
+        "visualization": "map",
+        "mapSettings": {
+          "locInfo": "CountryISO",
+          "locInfoColumn": "Country",
+          "sizeSettings": "ForeignLogins",
+          "legendAggregation": "Sum"
+        }
+      },
+      "name": "geoMap"
+    }
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

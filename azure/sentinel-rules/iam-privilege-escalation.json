@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2023-02-01-preview",
+      "name": "[concat(parameters('workspaceName'), '/Microsoft.SecurityInsights/iam-privilege-escalation-', uniqueString(resourceGroup().id))]",
+      "location": "canadacentral",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "IAM Privilege Escalation Detected",
+        "description": "Detects users assigning themselves admin roles, new role assignments outside business hours (before 08:00 or after 20:00 EST), or bulk role assignments (5+ in 10 minutes). Mapped to MITRE ATT&CK T1078 - Valid Accounts and T1098 - Account Manipulation.",
+        "severity": "High",
+        "enabled": true,
+        "status": "Available",
+        "query": "AuditLogs\n| where TimeGenerated >= ago(1h)\n| where OperationName has_any (\"Add member to role\", \"Add eligible member to role\", \"Add owner to group\", \"Add user\", \"Update role\")\n| extend\n    InitiatedByUPN  = tostring(InitiatedBy.user.userPrincipalName),\n    TargetUPN       = tostring(TargetResources[0].userPrincipalName),\n    RoleName        = tostring(TargetResources[0].displayName),\n    TargetId        = tostring(TargetResources[0].id),\n    ResultReason    = tostring(AdditionalDetails[0].value),\n    HourOfDay       = datetime_part('hour', TimeGenerated)\n| where isnotempty(InitiatedByUPN)\n| extend\n    SelfAssignment   = iff(InitiatedByUPN == TargetUPN, true, false),\n    OutsideHours     = iff(HourOfDay < 8 or HourOfDay >= 20, true, false),\n    IsAdminRole      = iff(RoleName has_any (\"Global Administrator\",\"Privileged Role Administrator\",\"Security Administrator\",\"User Access Administrator\"), true, false)\n| summarize\n    TotalAssignments = count(),\n    SelfAssigned     = countif(SelfAssignment == true),\n    OutsideHoursCount = countif(OutsideHours == true),\n    AdminRoleCount   = countif(IsAdminRole == true),\n    Roles            = make_set(RoleName),\n    Targets          = make_set(TargetUPN),\n    FirstSeen        = min(TimeGenerated),\n    LastSeen         = max(TimeGenerated)\n    by InitiatedByUPN, bin(TimeGenerated, 10m)\n| where SelfAssigned > 0 or OutsideHoursCount > 0 or TotalAssignments >= 5 or AdminRoleCount > 0\n| extend\n    AlertReason = case(\n        SelfAssigned > 0,      \"Self role assignment detected\",\n        TotalAssignments >= 5, \"Bulk role assignments (\" + tostring(TotalAssignments) + \" in 10 min)\",\n        OutsideHoursCount > 0, \"Role assignment outside business hours\",\n        AdminRoleCount > 0,    \"Privileged admin role assigned\",\n        \"Role escalation activity\"\n    )\n| project TimeGenerated, InitiatedByUPN, Targets, Roles, TotalAssignments, AlertReason, SelfAssigned, OutsideHoursCount",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": ["PrivilegeEscalation", "Persistence"],
+        "techniques": ["T1078", "T1098"],
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              { "identifier": "FullName", "columnName": "InitiatedByUPN" }
+            ]
+          }
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": ["Account"]
+          }
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "IAM Privilege Escalation by {{InitiatedByUPN}}",
+          "alertDescriptionFormat": "{{AlertReason}} — {{TotalAssignments}} assignments involving roles: {{Roles}}"
+        }
+      }
+    }
+  ],
+  "parameters": {
+    "workspaceName": {
+      "type": "string",
+      "defaultValue": "soc-lab-workspace",
+      "metadata": { "description": "Log Analytics workspace name" }
+    }
+  }
+}

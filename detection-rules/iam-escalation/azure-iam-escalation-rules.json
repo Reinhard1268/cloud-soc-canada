@@ -1,0 +1,66 @@
+{
+  "version": "1.0",
+  "description": "Azure IAM/RBAC privilege escalation detection rules",
+  "rules": [
+    {
+      "id": "azure-iam-001",
+      "name": "Global Administrator Role Assigned",
+      "description": "Detects assignment of the Global Administrator role to any account. MITRE T1098.",
+      "severity": "critical",
+      "logSource": "AuditLogs",
+      "kql": "AuditLogs\n| where OperationName =~ \"Add member to role\"\n| where TargetResources[0].displayName =~ \"Global Administrator\"\n| extend Actor=tostring(InitiatedBy.user.userPrincipalName), Target=tostring(TargetResources[0].userPrincipalName)\n| project TimeGenerated, Actor, Target, OperationName, Result",
+      "mitre": ["T1098"],
+      "tags": ["azure", "iam", "privilege-escalation"]
+    },
+    {
+      "id": "azure-iam-002",
+      "name": "Subscription Owner Role Assigned via ARM",
+      "description": "Detects Owner role assignments at subscription scope via Azure Resource Manager. MITRE T1098.",
+      "severity": "critical",
+      "logSource": "AzureActivity",
+      "kql": "AzureActivity\n| where OperationNameValue =~ \"microsoft.authorization/roleassignments/write\"\n| where ActivityStatusValue =~ \"Success\"\n| extend Props=todynamic(Properties)\n| where Props.requestbody has \"Owner\"\n| extend Caller=tostring(Caller)\n| project TimeGenerated, Caller, ResourceGroup, SubscriptionId, Properties",
+      "mitre": ["T1098"],
+      "tags": ["azure", "iam", "owner-role"]
+    },
+    {
+      "id": "azure-iam-003",
+      "name": "Service Principal with Owner Permission",
+      "description": "Detects service principals being granted Owner permissions, enabling automated privilege escalation. MITRE T1098.",
+      "severity": "high",
+      "logSource": "AuditLogs",
+      "kql": "AuditLogs\n| where OperationName has \"role\" and OperationName has \"add\"\n| where TargetResources[0].type =~ \"ServicePrincipal\"\n| where TargetResources[0].displayName has_any (\"Owner\", \"Contributor\")\n| extend Actor=tostring(InitiatedBy.user.userPrincipalName), SP=tostring(TargetResources[0].displayName)\n| project TimeGenerated, Actor, SP, OperationName, Result",
+      "mitre": ["T1098"],
+      "tags": ["azure", "iam", "service-principal"]
+    },
+    {
+      "id": "azure-iam-004",
+      "name": "Custom Role with Wildcard Actions Created",
+      "description": "Detects creation of custom RBAC roles with wildcard (*) actions, which may grant excessive permissions. MITRE T1548.",
+      "severity": "high",
+      "logSource": "AzureActivity",
+      "kql": "AzureActivity\n| where OperationNameValue =~ \"microsoft.authorization/roledefinitions/write\"\n| where ActivityStatusValue =~ \"Success\"\n| extend Props=todynamic(Properties)\n| where Props.requestbody has '\"*\"'\n| extend Caller=tostring(Caller)\n| project TimeGenerated, Caller, ResourceGroup, Properties",
+      "mitre": ["T1548"],
+      "tags": ["azure", "iam", "custom-role"]
+    },
+    {
+      "id": "azure-iam-005",
+      "name": "Privileged Identity Management (PIM) Bypass Detected",
+      "description": "Detects permanent role assignments to accounts that should use PIM just-in-time access. MITRE T1078.",
+      "severity": "high",
+      "logSource": "AuditLogs",
+      "kql": "AuditLogs\n| where OperationName =~ \"Add member to role\"\n| where ResultReason !has \"PIM\"\n| extend Role=tostring(TargetResources[0].displayName)\n| where Role in (\"Global Administrator\",\"Privileged Role Administrator\",\"Security Administrator\")\n| extend Actor=tostring(InitiatedBy.user.userPrincipalName), Target=tostring(TargetResources[0].userPrincipalName)\n| project TimeGenerated, Actor, Target, Role, OperationName",
+      "mitre": ["T1078"],
+      "tags": ["azure", "iam", "pim-bypass"]
+    },
+    {
+      "id": "azure-iam-006",
+      "name": "Application Permission Granted to Microsoft Graph",
+      "description": "Detects when high-privilege Microsoft Graph permissions are consented to an application. MITRE T1098.",
+      "severity": "high",
+      "logSource": "AuditLogs",
+      "kql": "AuditLogs\n| where OperationName =~ \"Add app role assignment to service principal\"\n| where TargetResources[0].displayName =~ \"Microsoft Graph\"\n| extend GrantedTo=tostring(TargetResources[1].displayName), Actor=tostring(InitiatedBy.user.userPrincipalName)\n| project TimeGenerated, Actor, GrantedTo, OperationName, Result",
+      "mitre": ["T1098"],
+      "tags": ["azure", "iam", "app-permissions", "graph"]
+    }
+  ]
+}

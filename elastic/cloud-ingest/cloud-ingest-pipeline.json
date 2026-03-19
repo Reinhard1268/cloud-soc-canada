@@ -1,0 +1,164 @@
+{
+  "description": "Ingest pipeline for cloud SOC logs — normalises AWS and Azure events to ECS",
+  "processors": [
+    {
+      "set": {
+        "field": "@timestamp",
+        "copy_from": "event.created",
+        "ignore_failure": true
+      }
+    },
+    {
+      "date": {
+        "field": "eventTime",
+        "formats": ["ISO8601", "yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd'T'HH:mm:ssZ"],
+        "target_field": "@timestamp",
+        "ignore_failure": true
+      }
+    },
+    {
+      "rename": {
+        "field": "eventName",
+        "target_field": "event.action",
+        "ignore_missing": true
+      }
+    },
+    {
+      "rename": {
+        "field": "sourceIPAddress",
+        "target_field": "source.ip",
+        "ignore_missing": true
+      }
+    },
+    {
+      "rename": {
+        "field": "userAgent",
+        "target_field": "user_agent.original",
+        "ignore_missing": true
+      }
+    },
+    {
+      "rename": {
+        "field": "awsRegion",
+        "target_field": "cloud.region",
+        "ignore_missing": true
+      }
+    },
+    {
+      "geoip": {
+        "field": "source.ip",
+        "target_field": "source.geo",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "user_agent": {
+        "field": "user_agent.original",
+        "target_field": "user_agent",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "set": {
+        "field": "cloud.provider",
+        "value": "aws",
+        "if": "ctx.tags != null && ctx.tags.contains('cloudtrail')"
+      }
+    },
+    {
+      "set": {
+        "field": "cloud.provider",
+        "value": "azure",
+        "if": "ctx.tags != null && ctx.tags.contains('azure')"
+      }
+    },
+    {
+      "set": {
+        "field": "event.outcome",
+        "value": "failure",
+        "if": "ctx.errorCode != null && ctx.errorCode != ''"
+      }
+    },
+    {
+      "set": {
+        "field": "event.outcome",
+        "value": "success",
+        "if": "ctx.event?.outcome == null && (ctx.errorCode == null || ctx.errorCode == '')"
+      }
+    },
+    {
+      "set": {
+        "field": "event.dataset",
+        "value": "aws.cloudtrail",
+        "if": "ctx.fields?.log_type == 'cloudtrail'"
+      }
+    },
+    {
+      "set": {
+        "field": "event.dataset",
+        "value": "aws.guardduty",
+        "if": "ctx.fields?.log_type == 'guardduty'"
+      }
+    },
+    {
+      "set": {
+        "field": "event.dataset",
+        "value": "azure.activitylogs",
+        "if": "ctx.fields?.log_type == 'activity'"
+      }
+    },
+    {
+      "set": {
+        "field": "event.dataset",
+        "value": "azure.signinlogs",
+        "if": "ctx.fields?.log_type == 'signinlogs'"
+      }
+    },
+    {
+      "lowercase": {
+        "field": "event.outcome",
+        "ignore_missing": true
+      }
+    },
+    {
+      "set": {
+        "field": "event.ingested",
+        "value": "{{_ingest.timestamp}}"
+      }
+    },
+    {
+      "set": {
+        "field": "labels.soc_project",
+        "value": "06-cloud-soc-canada"
+      }
+    },
+    {
+      "set": {
+        "field": "labels.canada_region",
+        "value": "true"
+      }
+    },
+    {
+      "remove": {
+        "field": ["_temp_", "message"],
+        "ignore_missing": true
+      }
+    }
+  ],
+  "on_failure": [
+    {
+      "set": {
+        "field": "error.message",
+        "value": "{{ _ingest.on_failure_message }}"
+      }
+    },
+    {
+      "set": {
+        "field": "error.pipeline",
+        "value": "cloud-ingest-pipeline"
+      }
+    }
+  ]
+}

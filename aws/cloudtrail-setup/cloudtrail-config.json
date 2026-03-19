@@ -1,0 +1,79 @@
+{
+  "TrailName": "soc-lab-trail",
+  "S3BucketName": "soc-lab-cloudtrail-logs-ca",
+  "S3KeyPrefix": "cloudtrail",
+  "IncludeGlobalServiceEvents": true,
+  "IsMultiRegionTrail": true,
+  "EnableLogFileValidation": true,
+  "CloudWatchLogsLogGroupArn": "arn:aws:logs:ca-central-1:123456789012:log-group:/aws/cloudtrail/soc-lab:*",
+  "CloudWatchLogsRoleArn": "arn:aws:iam::123456789012:role/CloudTrail-CloudWatch-Role",
+  "SnsTopicName": "soc-lab-cloudtrail-alerts",
+  "IsOrganizationTrail": false,
+  "TagsList": [
+    { "Key": "Project", "Value": "06-cloud-soc-canada" },
+    { "Key": "Environment", "Value": "lab" },
+    { "Key": "Region", "Value": "ca-central-1" },
+    { "Key": "Owner", "Value": "soc-lab" }
+  ],
+  "EventSelectors": [
+    {
+      "ReadWriteType": "All",
+      "IncludeManagementEvents": true,
+      "DataResources": [
+        {
+          "Type": "AWS::S3::Object",
+          "Values": ["arn:aws:s3:::"]
+        },
+        {
+          "Type": "AWS::Lambda::Function",
+          "Values": ["arn:aws:lambda"]
+        }
+      ],
+      "ExcludeManagementEventSources": []
+    }
+  ],
+  "InsightSelectors": [
+    {
+      "InsightType": "ApiCallRateInsight"
+    },
+    {
+      "InsightType": "ApiErrorRateInsight"
+    }
+  ],
+  "S3BucketConfig": {
+    "BucketName": "soc-lab-cloudtrail-logs-ca",
+    "Region": "ca-central-1",
+    "Versioning": true,
+    "Encryption": {
+      "Type": "AES256"
+    },
+    "PublicAccessBlock": {
+      "BlockPublicAcls": true,
+      "IgnorePublicAcls": true,
+      "BlockPublicPolicy": true,
+      "RestrictPublicBuckets": true
+    },
+    "LifecyclePolicy": {
+      "Rules": [
+        {
+          "ID": "cloudtrail-log-retention",
+          "Status": "Enabled",
+          "Filter": { "Prefix": "cloudtrail/" },
+          "Expiration": { "Days": 90 },
+          "NoncurrentVersionExpiration": { "NoncurrentDays": 30 }
+        }
+      ]
+    }
+  },
+  "CloudWatchConfig": {
+    "LogGroupName": "/aws/cloudtrail/soc-lab",
+    "RetentionDays": 90,
+    "Region": "ca-central-1"
+  },
+  "SnsConfig": {
+    "TopicName": "soc-lab-cloudtrail-alerts",
+    "Region": "ca-central-1",
+    "Protocol": "email",
+    "DisplayName": "SOC Lab CloudTrail Alerts"
+  }
+}
